@@ -69,7 +69,10 @@ async function callSummaryAI(userMessage, signal) {
     if (!tryAcquireHalfOpenProbe()) throw new Error('AI circuit breaker is open — skipping summarize');
     try {
         let text;
-        if (mode === 'profile') {
+        // 'direct' routes through callAI exactly like 'profile' — without this
+        // it would fall into the 'st' generateQuietPrompt branch below and use
+        // ST's active connection instead of the configured endpoint.
+        if (mode === 'profile' || mode === 'direct') {
             const result = await callAI(systemPrompt, userMessage, {
                 ...conn,
                 caller: 'summarize',

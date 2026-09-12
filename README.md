@@ -185,6 +185,35 @@ Diagnostics exports for bug reports are pseudonymized before they leave your mac
   <img src="https://i.imgur.com/8Mktt2y.png" alt="Setup wizard first page" width="640">
 </p>
 
+## AI connections: profile or direct
+
+Every AI feature (AI Search, Session Scribe, Auto Lorebook, AI Notepad, Librarian,
+Optimize Keys) picks its own connection in **DLE Settings → Setup → AI Connections**:
+
+- **Connection Profile** — reuse a SillyTavern Connection Manager profile. Nothing
+  to configure beyond picking it from the dropdown.
+- **Direct API (URL + key)** — point DeepLore straight at an endpoint. Use this when
+  Connection Manager profiles don't work for you: a profile that was renamed or
+  deleted, a completion preset SillyTavern rejects, or a provider you simply want
+  DeepLore to talk to on its own.
+
+  Paste an **API URL** (a base like `https://api.openai.com/v1`, or the full
+  endpoint), an **API key**, and a **model** — the model is required here, since
+  there's no profile to read one from. Format is auto-detected: OpenAI-compatible
+  (`/chat/completions`) or Anthropic (`/v1/messages`); override it if the guess is
+  wrong. That covers OpenAI, OpenRouter, Anthropic, Groq, DeepSeek, Mistral, xAI,
+  Together, Gemini's OpenAI-compatible endpoint, and local runtimes like Ollama,
+  LM Studio, llama.cpp and TabbyAPI (leave the key blank for those).
+
+  Requests go straight from your browser, so the endpoint has to allow browser
+  (CORS) requests. If it doesn't, tick **Route through SillyTavern's CORS proxy**
+  (needs `enableCorsProxy: true` in ST's `config.yaml`). DeepLore says so
+  explicitly when it thinks CORS is what blocked a call.
+
+Other features can **Inherit** AI Search's connection, or override it with their own.
+API keys are stored in SillyTavern's extension settings, the same as your Obsidian
+key — they're never written to diagnostic exports.
+
 ## What's in the box
 
 <p align="center">
@@ -222,6 +251,10 @@ Full feature docs: [**Wiki →**](https://github.com/pixelnull/sillytavern-DeepL
 See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) for the complete list.
 
 ## Upgrading
+
+> **v2.6.3 note**: AI features can now connect via a **Direct API** URL + key, as an
+> alternative to SillyTavern Connection Profiles — see [AI connections](#ai-connections-profile-or-direct)
+> above. Existing profile-mode setups are untouched; nothing needs migrating.
 
 > **v2.5 note**: Custom Proxy connection mode for AI features (claude-code-proxy direct routing via ST's CORS bridge) was removed in v2.5. All AI features now use SillyTavern Connection Profiles. If you were using Custom Proxy, DLE will show a migration popup on first boot of v2.5 and automatically switch each affected feature (AI Search, Scribe, Auto Lorebook, AI Notepad, Librarian, Optimize Keys) to its corresponding Connection Profile. `enableCorsProxy: true` in ST's `config.yaml` is no longer required for DLE AI features (it remains required only for ST's own raw-URL AI requests if you use those, and for Obsidian vault fetching when using HTTPS with a self-signed cert).
 

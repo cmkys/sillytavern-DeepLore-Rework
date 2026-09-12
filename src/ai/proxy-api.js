@@ -9,54 +9,21 @@
  * Requires `enableCorsProxy: true` in ST's config.yaml.
  */
 import { abortWith } from '../diagnostics/interceptors.js';
+import { assertNoServerSideSsrf, scrubSecrets } from './url-safety.js';
 
 /**
  * SSRF validator: blocks cloud metadata, private/CGNAT/link-local ranges, and
  * octal/decimal IP shorthand. Allows 127.0.0.1 (local proxies) but blocks the
  * rest of 127.0.0.0/8. Throws on bad URL.
+ *
+ * The rules themselves now live in `url-safety.js` so Direct API mode can apply
+ * the identical check to its own CORS-bridged requests without importing this
+ * dead-headed module. Messages are unchanged ("Proxy URL …").
  */
 export function validateProxyUrl(url) {
     // BUG-396: fail loudly here on empty/malformed/non-http(s) — callers assume
     // this either threw or OK'd the URL.
-    if (typeof url !== 'string' || !url.trim()) {
-        throw new Error('Proxy URL is empty');
-    }
-    let parsed;
-    try { parsed = new URL(url); }
-    catch { throw new Error(`Proxy URL "${url}" is not a valid URL`); }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new Error(`Proxy URL "${url}" must use http:// or https://`);
-    }
-    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-    const blockedHosts = ['169.254.169.254', 'metadata.google.internal', '100.100.100.200'];
-    if (blockedHosts.includes(hostname)) {
-        throw new Error(`Proxy URL "${hostname}" is blocked (potential SSRF target)`);
-    }
-    if (hostname === 'localhost' || hostname === '0.0.0.0' || hostname === '::1'
-        || hostname === '::ffff:127.0.0.1') {
-        throw new Error(`Proxy URL "${hostname}" is blocked — use 127.0.0.1 for local proxies`);
-    }
-    const privatePatterns = [
-        /^10\./,
-        /^127\./,
-        /^172\.(1[6-9]|2\d|3[01])\./,
-        /^192\.168\./,
-        /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,
-        /^169\.254\./,
-        /^0\./,
-        /^::ffff:/,
-        /^fd[0-9a-f]{2}:/,
-        /^fe80:/,
-    ];
-    if (privatePatterns.some(p => p.test(hostname)) && hostname !== '127.0.0.1') {
-        throw new Error(`Proxy URL "${hostname}" points to a private/reserved network address`);
-    }
-    if (/^\d+$/.test(hostname) || /^0x[0-9a-f]+$/i.test(hostname)) {
-        throw new Error(`Proxy URL "${hostname}" uses a numeric IP shorthand — use dotted notation`);
-    }
-    if (/(?:^|\.)0\d+(?:\.|$)/.test(hostname)) {
-        throw new Error(`Proxy URL "${hostname}" uses octal IP notation — use standard dotted decimal`);
-    }
+    assertNoServerSideSsrf(url, 'Proxy URL');
 }
 
 /**
@@ -127,13 +94,7 @@ export async function callProxyViaCorsBridge(proxyUrl, model, systemPrompt, user
             // cuts the token below the regex's {10,} minimum so it never matches
             // — and a partial token leaks into Error.message. Mirror the
             // scrub-then-slice pattern from agentic-api.js. See gotchas.md #56.
-            const safeText = text
-                .replace(/sk-proj-[a-zA-Z0-9_-]{10,}/g, 'sk-proj-***') // OpenAI (matched first; superset of sk-)
-                .replace(/sk-[a-zA-Z0-9_-]{10,}/g, 'sk-***')          // Anthropic
-                .replace(/AIza[a-zA-Z0-9_-]{10,}/g, 'AIza***')         // Google
-                .replace(/gsk_[a-zA-Z0-9_-]{10,}/g, 'gsk_***')         // Groq
-                .replace(/Bearer\s+[A-Za-z0-9_\-./]{10,}/g, 'Bearer ***')
-                .substring(0, 150);
+            const safeText = scrubSecrets(text).substring(0, 150);
             throw new Error(`Proxy returned HTTP ${response.status}: ${safeText}`);
         }
 

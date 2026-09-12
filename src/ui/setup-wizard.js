@@ -1182,12 +1182,22 @@ async function applyWizardSettings() {
 
     if (searchMode !== 'keywords') {
         const aiMode = $wizard.find('input[name="dle-wiz-ai-mode"]:checked').val();
-        settings.aiSearchConnectionMode = aiMode || 'profile';
-        if (aiMode === 'profile') {
-            settings.aiSearchProfileId = $wizard.find('#dle-wiz-ai-profile').val() || '';
-        } else {
-            settings.aiSearchProxyUrl = $wizard.find('#dle-wiz-ai-proxy-url').val().trim() || 'http://127.0.0.1:42069';
-            settings.aiSearchModel = $wizard.find('#dle-wiz-ai-model').val().trim() || '';
+        const wizardProfileId = $wizard.find('#dle-wiz-ai-profile').val() || '';
+        // The wizard only offers profile mode, so a user already on Direct API
+        // (configured in DLE Settings → Setup → AI Connections) who re-runs the
+        // wizard would be silently switched back to an empty profile binding and
+        // lose AI search until they noticed. Only take the wizard's answer when
+        // they actually picked a profile here; otherwise leave their connection
+        // alone.
+        const keepDirect = settings.aiSearchConnectionMode === 'direct' && !wizardProfileId;
+        if (!keepDirect) {
+            settings.aiSearchConnectionMode = aiMode || 'profile';
+            if (aiMode === 'profile') {
+                settings.aiSearchProfileId = wizardProfileId;
+            } else {
+                settings.aiSearchProxyUrl = $wizard.find('#dle-wiz-ai-proxy-url').val().trim() || 'http://127.0.0.1:42069';
+                settings.aiSearchModel = $wizard.find('#dle-wiz-ai-model').val().trim() || '';
+            }
         }
     }
 

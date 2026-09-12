@@ -38,7 +38,11 @@ export async function callScribe(systemPrompt, userMessage, _settings) {
     const resolved = resolveConnectionConfig('scribe');
     const mode = resolved.mode;
 
-    if (mode === 'profile') {
+    // 'direct' rides the same callAI path as 'profile' — callAI owns the mode
+    // dispatch. Listing it here is load-bearing: without it, direct mode falls
+    // through to the 'st' branch below and silently uses ST's active connection
+    // instead of the endpoint the user configured.
+    if (mode === 'profile' || mode === 'direct') {
         // v2.5 dead-head: 'proxy' removed from the dispatch whitelist. callAI's
         // proxy branch throws a migration error if a legacy 'proxy' value reaches it.
         // S4-1: mutation gate — tryAcquireHalfOpenProbe, not isAiCircuitOpen

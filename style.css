@@ -3584,6 +3584,29 @@ button.dle-browse-block.dle-block-active {
 .dle-conn-accordion-body .radio_group { margin-bottom: 6px; }
 .dle-conn-inherit-note { font-size: var(--dle-text-xs); color: var(--dle-text-muted); padding: var(--dle-space-1) 0; }
 
+/* ── Direct API mode rows (URL + key + format + CORS toggle) ──
+   Grouped inside a tinted well so the endpoint/credential pair reads as one
+   unit, distinct from the model/tokens/timeout fields underneath it. */
+.dle-conn-direct-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--dle-space-2);
+    padding: var(--dle-space-2);
+    margin-bottom: var(--dle-space-2);
+    border: 1px solid color-mix(in srgb, var(--dle-border) 50%, transparent);
+    border-radius: var(--dle-radius-sm);
+    background: color-mix(in srgb, var(--dle-border) 10%, transparent);
+}
+.dle-conn-direct-row .checkbox_label { font-size: var(--dle-text-sm); }
+.dle-conn-key-wrap .dle-conn-key-reveal {
+    flex-shrink: 0;
+    padding: 0 var(--dle-space-2);
+    line-height: 1;
+}
+/* The masked key still needs to be readable when revealed — the browser's
+   default password font can otherwise letterspace it oddly. */
+.dle-conn-direct-row input[type="password"] { font-family: var(--dle-font-mono, monospace); }
+
 /* ── Injection tab table ── */
 .dle-injection-table {
     display: flex;

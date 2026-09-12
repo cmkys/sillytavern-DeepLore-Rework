@@ -6,6 +6,7 @@ import { simpleHash, buildAiChatContext } from '../../core/utils.js';
 import { getSettings } from '../../settings.js';
 import { resolvePromptOrOverride } from '../prompts/prompt-store.js';
 import { callProxyViaCorsBridge } from './proxy-api.js';
+import { callDirectApi } from './direct-api.js';
 import { isUnderlyingClaude } from '../librarian/agentic-api.js';
 import {
     vaultIndex, aiSearchCache, aiSearchStats, lastScribeSummary,
@@ -343,6 +344,7 @@ export async function callAI(systemPrompt, userMessage, connectionConfig) {
     }
 
     const { mode, profileId, proxyUrl, model, maxTokens, timeout, cacheHints, signal, jsonSchema, disableThinkingOnClaude } = connectionConfig;
+    const { apiUrl, apiKey, apiFormat, apiViaCorsProxy } = connectionConfig;
 
     if (signal?.aborted) {
         const preReason = signal.reason?.message || 'pre_call_abort';
@@ -379,6 +381,18 @@ export async function callAI(systemPrompt, userMessage, connectionConfig) {
         // breaker on the second call). See docs/ai-subsystem.md §1.
         if (mode === 'profile') {
             result = await callViaProfile(systemPrompt, userMessage, maxTokens, timeout, profileId, model, signal, jsonSchema, disableThinkingOnClaude);
+        } else if (mode === 'direct') {
+            // Direct API: DLE owns the whole request. No Connection Manager, no
+            // preset, no ST-side translation — which is the point (see
+            // direct-api.js header). `disableThinkingOnClaude` is a no-op here:
+            // we never send a `thinking` block, so the 400 it guards against
+            // (forced tool_choice + extended thinking) cannot arise.
+            result = await callDirectApi(systemPrompt, userMessage, {
+                apiUrl, apiKey, model, maxTokens, timeout,
+                format: apiFormat, viaCorsProxy: apiViaCorsProxy,
+                signal, cacheHints, jsonSchema,
+                forceUserRole: getSettings().aiForceUserRole,
+            });
         } else if (mode === 'proxy') {
             // v2.5 dead-head: Custom Proxy mode removed. proxy-api.js is retained for
             // rollback safety, but every dispatch site refuses with a clear error.
@@ -386,7 +400,7 @@ export async function callAI(systemPrompt, userMessage, connectionConfig) {
             // the pure scrubber / validator helpers in that module.
             throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Setup → AI Connections.');
         } else {
-            throw new Error(`callAI: unknown connection mode "${mode}" (expected 'profile' or 'proxy' — 'inherit' must be resolved by resolveConnectionConfig upstream)`);
+            throw new Error(`callAI: unknown connection mode "${mode}" (expected 'profile', 'direct' or 'proxy' — 'inherit' must be resolved by resolveConnectionConfig upstream)`);
         }
         _callEntry.durationMs = Date.now() - _callStart;
         _callEntry.status = 'ok';
@@ -728,7 +742,7 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
     // BUG-AUDIT (Fix 3): cache-shape version forces old caches to miss + rewrite in
     // the new vaultSource-aware shape. Bump on any cache-record shape change.
     const CACHE_SHAPE_VERSION = 'v2';
-    const settingsKey = `${CACHE_SHAPE_VERSION}|${settings.aiSearchMode}|${settings.aiSearchScanDepth}|${settings.maxEntries}|${settings.unlimitedEntries}|${promptHash}|${settings.aiSearchConnectionMode}|${settings.aiSearchProfileId}|${settings.aiSearchModel}|${settings.aiSearchProxyUrl || ''}|${settings.aiSearchMaxTokens || ''}|${settings.aiConfidenceThreshold || 'low'}|${settings.manifestSummaryMode || 'prefer_summary'}|${settings.aiSearchManifestSummaryLength || 600}`;
+    const settingsKey = `${CACHE_SHAPE_VERSION}|${settings.aiSearchMode}|${settings.aiSearchScanDepth}|${settings.maxEntries}|${settings.unlimitedEntries}|${promptHash}|${settings.aiSearchConnectionMode}|${settings.aiSearchProfileId}|${settings.aiSearchModel}|${settings.aiSearchProxyUrl || ''}|${settings.aiSearchApiUrl || ''}|${settings.aiSearchApiFormat || ''}|${settings.aiSearchMaxTokens || ''}|${settings.aiConfidenceThreshold || 'low'}|${settings.manifestSummaryMode || 'prefer_summary'}|${settings.aiSearchManifestSummaryLength || 600}`;
     const manifestHash = simpleHash(settingsKey + candidateManifest);
     const chatHash = simpleHash(chatContext);
     // Defer split until after the exact-match check.

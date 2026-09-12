@@ -82,7 +82,8 @@ export async function callAutoSuggest(systemPrompt, userMessage, toolKey = 'auto
         } finally {
             if (onStop) { try { eventSource.removeListener(event_types.GENERATION_STOPPED, onStop); } catch { /* noop */ } }
         }
-    } else if (mode === 'profile') {
+    } else if (mode === 'profile' || mode === 'direct') {
+        // 'direct' shares this branch — callAI owns mode dispatch (see callScribe).
         // v2.5 dead-head: 'proxy' removed from the dispatch whitelist. callAI's
         // proxy branch throws a migration error; the unknown-mode `else` below
         // also throws clearly if a legacy 'proxy' value slips through here.

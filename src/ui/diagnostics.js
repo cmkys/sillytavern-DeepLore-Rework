@@ -42,6 +42,21 @@ export function runHealthCheck() {
         issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI-only mode enabled but no connection profile selected' });
     }
 
+    // Direct API mode has two hard prerequisites and one soft one. URL and model
+    // are errors — the call cannot be built without them. A missing key is only a
+    // warning: local runtimes (Ollama, LM Studio, llama.cpp) legitimately want none.
+    if (settings.aiSearchEnabled && settings.aiSearchConnectionMode === 'direct') {
+        if (!settings.aiSearchApiUrl) {
+            issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI search is set to Direct API mode but no API URL is set. Add one in DLE Settings → Setup → AI Connections.' });
+        }
+        if (!settings.aiSearchModel) {
+            issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'AI search is set to Direct API mode but no model is set — Direct API mode has no profile to read a model from.' });
+        }
+        if (!settings.aiSearchApiKey) {
+            issues.push({ type: 'Settings', severity: 'warning', entry: '—', detail: 'AI search Direct API mode has no API key. Fine for a local endpoint; hosted providers will return 401.' });
+        }
+    }
+
     // v2.5 dead-head: Custom Proxy mode removed. Surface a migration-pointing
     // error if a legacy proxy-mode setting is still saved on an enabled feature
     // — the old "no proxy URL set" warning is moot since users can no longer
@@ -52,6 +67,10 @@ export function runHealthCheck() {
 
     if (settings.scribeEnabled && settings.scribeConnectionMode === 'profile' && !settings.scribeProfileId) {
         issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'Scribe enabled in profile mode but no profile selected' });
+    }
+
+    if (settings.scribeEnabled && settings.scribeConnectionMode === 'direct' && !settings.scribeApiUrl) {
+        issues.push({ type: 'Settings', severity: 'error', entry: '—', detail: 'Scribe is set to Direct API mode but no API URL is set.' });
     }
 
     if (settings.scribeEnabled && settings.scribeConnectionMode === 'proxy') {

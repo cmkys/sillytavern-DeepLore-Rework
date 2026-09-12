@@ -11,6 +11,7 @@ import * as state from '../state.js';
 import { getSettings, resolveConnectionConfig } from '../../settings.js';
 import { runHealthCheck } from '../ui/diagnostics.js';
 import { getAllCircuitStates } from '../vault/obsidian-api.js';
+import { resolveDirectFormat } from '../ai/direct-api.js';
 import { getCurrentForChat as getCurrentVerdictForChat, _debugRingSnapshot } from '../verdict/verdict-store.js';
 
 // Diagnostic snapshot reads the CURRENT CHAT's verdict so "what's DLE's current
@@ -278,6 +279,28 @@ function connectionSnapshot() {
                     maxTokens: resolved.maxTokens,
                     timeout: resolved.timeout,
                 };
+
+                if (resolved.mode === 'direct') {
+                    // Direct API: report enough to diagnose (host, wire format,
+                    // whether a key is present) and NOTHING that leaks the key.
+                    // The URL can carry credentials in a query string, so only the
+                    // host+path is surfaced, never the full URL.
+                    tool.directFormat = resolveDirectFormat(resolved.apiUrl, resolved.apiFormat);
+                    tool.directViaCorsProxy = !!resolved.apiViaCorsProxy;
+                    tool.directHasKey = !!(resolved.apiKey || '').trim();
+                    try {
+                        const u = new URL(resolved.apiUrl);
+                        tool.directEndpoint = `${u.protocol}//${u.host}${u.pathname}`;
+                    } catch {
+                        tool.directEndpoint = null;
+                    }
+                    if (!tool.directEndpoint) {
+                        issues.push(`${key}: Direct API mode with no valid API URL`);
+                    }
+                    if (!resolved.model) {
+                        issues.push(`${key}: Direct API mode requires a model name — none set`);
+                    }
+                }
 
                 if (resolved.mode === 'profile' && resolved.profileId) {
                     const profile = lookupProfile(resolved.profileId);

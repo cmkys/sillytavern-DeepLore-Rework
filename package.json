@@ -18,6 +18,7 @@
         "test:diagnostics": "node test/diagnostics.test.mjs",
         "test:vault": "node test/vault.test.mjs",
         "test:regression": "node test/regression.test.mjs",
+        "test:direct-api": "node test/direct-api.test.mjs",
         "test:verdict": "node test/verdict.test.mjs",
         "test:i18n": "node test/i18n.test.mjs",
         "test:i18n-html": "node test/i18n-html.test.mjs",
@@ -32,7 +33,7 @@
         "test:audit-fix-lifecycle": "node test/audit-fix-lifecycle.test.mjs",
         "test:audit-fix-vault": "node test/audit-fix-vault.test.mjs",
         "test:audit-fix-secondary": "node test/audit-fix-secondary.test.mjs",
-        "test:all": "node test/unit.mjs && node test/integration.mjs && node test/fields.test.mjs && node test/stages.test.mjs && node test/contracts.test.mjs && node test/diagnostics.test.mjs && node test/vault.test.mjs && node test/regression.test.mjs && node test/verdict.test.mjs && node test/i18n.test.mjs && node test/wi-import.test.mjs && node test/prompts-delete-safety.test.mjs && node test/prompts-store.test.mjs && node test/prompts-api.test.mjs && node test/dag.test.mjs && node test/health.test.mjs && node test/verify-imports.mjs && node test/i18n-html.test.mjs && node test/audit-fix-privacy.test.mjs && node test/audit-fix-librarian.test.mjs && node test/audit-fix-lifecycle.test.mjs && node test/audit-fix-vault.test.mjs && node test/audit-fix-secondary.test.mjs",
+        "test:all": "node test/unit.mjs && node test/integration.mjs && node test/fields.test.mjs && node test/stages.test.mjs && node test/contracts.test.mjs && node test/diagnostics.test.mjs && node test/vault.test.mjs && node test/regression.test.mjs && node test/direct-api.test.mjs && node test/verdict.test.mjs && node test/i18n.test.mjs && node test/wi-import.test.mjs && node test/prompts-delete-safety.test.mjs && node test/prompts-store.test.mjs && node test/prompts-api.test.mjs && node test/dag.test.mjs && node test/health.test.mjs && node test/verify-imports.mjs && node test/i18n-html.test.mjs && node test/audit-fix-privacy.test.mjs && node test/audit-fix-librarian.test.mjs && node test/audit-fix-lifecycle.test.mjs && node test/audit-fix-vault.test.mjs && node test/audit-fix-secondary.test.mjs",
         "test:imports": "node test/verify-imports.mjs",
         "lint": "eslint ."
     },

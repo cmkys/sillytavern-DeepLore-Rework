@@ -156,6 +156,17 @@ function buildSummarySection(snapshot, scrubbedGenerations) {
                         status = '**❌ MISSING**';
                         issues.critical.push(`${key}: connection profile missing`);
                     }
+                } else if (mode === 'direct') {
+                    // Host+path only — the key never appears, and a URL with a
+                    // query-string credential was already stripped upstream.
+                    target = t.directEndpoint || '(no URL)';
+                    if (t.directFormat) target += ` [${t.directFormat}${t.directViaCorsProxy ? ' via ST proxy' : ''}]`;
+                    if (!t.directEndpoint) {
+                        status = '**❌ NO URL**';
+                        issues.critical.push(`${key}: Direct API mode with no API URL`);
+                    } else if (!t.directHasKey) {
+                        status = '⚠ no key';
+                    }
                 } else if (mode === 'proxy') {
                     target = t.proxyUrl || '(no URL)';
                 }
@@ -632,6 +643,10 @@ function buildConnectionsReference(rawSnapshot) {
             if (mode === 'profile') {
                 target = t.profileName || t.profileId || '(none)';
                 if (t.profileExists === false) target += ' ❌ MISSING';
+            } else if (mode === 'direct') {
+                target = t.directEndpoint || '(no URL)';
+                if (t.directFormat) target += ` [${t.directFormat}${t.directViaCorsProxy ? ' via ST proxy' : ''}]`;
+                if (!t.directHasKey) target += ' ⚠ no key';
             } else if (mode === 'proxy') {
                 target = t.proxyUrl || '(no URL)';
             }

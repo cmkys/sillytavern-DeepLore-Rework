@@ -15,6 +15,7 @@ import { getSettings, getPrimaryVault, PROMPT_TAG_PREFIX, settingsConstraints, i
 import { promptManager } from '../../../../../openai.js';
 import { testConnection, buildConnectionGuidanceHtml } from '../vault/obsidian-api.js';
 import { testProxyConnection } from '../ai/proxy-api.js';
+import { testDirectConnection } from '../ai/direct-api.js';
 import {
     vaultIndex,
     computeOverallStatus,
@@ -576,45 +577,57 @@ async function deletePreset($container, $select, toolKey, settings) {
 const TOOL_CONNECTION_CONFIGS = {
     aiSearch: {
         label: 'AI Search', icon: 'brain',
-        supportedModes: ['profile', 'proxy'], isRoot: true,
+        supportedModes: ['profile', 'direct', 'proxy'], isRoot: true,
         modeKey: 'aiSearchConnectionMode', profileIdKey: 'aiSearchProfileId',
         proxyUrlKey: 'aiSearchProxyUrl', modelKey: 'aiSearchModel',
         maxTokensKey: 'aiSearchMaxTokens', timeoutKey: 'aiSearchTimeout',
+        apiUrlKey: 'aiSearchApiUrl', apiKeyKey: 'aiSearchApiKey',
+        apiFormatKey: 'aiSearchApiFormat', apiCorsKey: 'aiSearchApiViaCorsProxy',
     },
     scribe: {
         label: 'Session Scribe', icon: 'feather-pointed',
-        supportedModes: ['inherit', 'st', 'profile', 'proxy'],
+        supportedModes: ['inherit', 'st', 'profile', 'direct', 'proxy'],
         modeKey: 'scribeConnectionMode', profileIdKey: 'scribeProfileId',
         proxyUrlKey: 'scribeProxyUrl', modelKey: 'scribeModel',
         maxTokensKey: 'scribeMaxTokens', timeoutKey: 'scribeTimeout',
+        apiUrlKey: 'scribeApiUrl', apiKeyKey: 'scribeApiKey',
+        apiFormatKey: 'scribeApiFormat', apiCorsKey: 'scribeApiViaCorsProxy',
     },
     autoSuggest: {
         label: 'Auto Lorebook', icon: 'wand-magic-sparkles',
-        supportedModes: ['inherit', 'st', 'profile', 'proxy'],
+        supportedModes: ['inherit', 'st', 'profile', 'direct', 'proxy'],
         modeKey: 'autoSuggestConnectionMode', profileIdKey: 'autoSuggestProfileId',
         proxyUrlKey: 'autoSuggestProxyUrl', modelKey: 'autoSuggestModel',
         maxTokensKey: 'autoSuggestMaxTokens', timeoutKey: 'autoSuggestTimeout',
+        apiUrlKey: 'autoSuggestApiUrl', apiKeyKey: 'autoSuggestApiKey',
+        apiFormatKey: 'autoSuggestApiFormat', apiCorsKey: 'autoSuggestApiViaCorsProxy',
     },
     aiNotepad: {
         label: 'AI Notepad', icon: 'robot',
-        supportedModes: ['inherit', 'profile', 'proxy'],
+        supportedModes: ['inherit', 'profile', 'direct', 'proxy'],
         modeKey: 'aiNotepadConnectionMode', profileIdKey: 'aiNotepadProfileId',
         proxyUrlKey: 'aiNotepadProxyUrl', modelKey: 'aiNotepadModel',
         maxTokensKey: 'aiNotepadMaxTokens', timeoutKey: 'aiNotepadTimeout',
+        apiUrlKey: 'aiNotepadApiUrl', apiKeyKey: 'aiNotepadApiKey',
+        apiFormatKey: 'aiNotepadApiFormat', apiCorsKey: 'aiNotepadApiViaCorsProxy',
     },
     librarian: {
         label: 'Librarian', icon: 'book-bookmark',
-        supportedModes: ['inherit', 'profile', 'proxy'],
+        supportedModes: ['inherit', 'profile', 'direct', 'proxy'],
         modeKey: 'librarianConnectionMode', profileIdKey: 'librarianProfileId',
         proxyUrlKey: 'librarianProxyUrl', modelKey: 'librarianModel',
         maxTokensKey: 'librarianSessionMaxTokens', timeoutKey: 'librarianSessionTimeout',
+        apiUrlKey: 'librarianApiUrl', apiKeyKey: 'librarianApiKey',
+        apiFormatKey: 'librarianApiFormat', apiCorsKey: 'librarianApiViaCorsProxy',
     },
     optimizeKeys: {
         label: 'Optimize Keys', icon: 'key',
-        supportedModes: ['inherit', 'profile', 'proxy'],
+        supportedModes: ['inherit', 'profile', 'direct', 'proxy'],
         modeKey: 'optimizeKeysConnectionMode', profileIdKey: 'optimizeKeysProfileId',
         proxyUrlKey: 'optimizeKeysProxyUrl', modelKey: 'optimizeKeysModel',
         maxTokensKey: 'optimizeKeysMaxTokens', timeoutKey: 'optimizeKeysTimeout',
+        apiUrlKey: 'optimizeKeysApiUrl', apiKeyKey: 'optimizeKeysApiKey',
+        apiFormatKey: 'optimizeKeysApiFormat', apiCorsKey: 'optimizeKeysApiViaCorsProxy',
     },
 };
 
@@ -622,6 +635,7 @@ const MODE_LABELS = {
     inherit: 'Inherit from AI Search',
     st: 'SillyTavern Connection',
     profile: 'Connection Profile',
+    direct: 'Direct API (URL + key)',
     proxy: 'Custom Proxy',
 };
 
@@ -681,6 +695,32 @@ function buildAccordionHtml($container) {
         html += `<input id="${id}-proxy-url" type="text" class="text_pole" placeholder="http://localhost:42069" />`;
         html += `</div></div>`;
 
+        // Direct API rows. Hidden unless the tool's mode is 'direct'.
+        // autocomplete="off" + type=password on the key so browser password
+        // managers don't offer to save it against the SillyTavern origin.
+        html += `<div class="${id}-direct-row dle-conn-direct-row" style="display: none;">`;
+        html += `<div class="flex-container"><div class="flex1">`;
+        html += `<label for="${id}-api-url"><small>API URL</small></label>`;
+        html += `<input id="${id}-api-url" type="text" class="text_pole" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" />`;
+        html += `<div class="dle-text-xs dle-muted" style="margin-top:4px;">Base URL or full endpoint — <code>/chat/completions</code> (or <code>/v1/messages</code>) is appended when missing.</div>`;
+        html += `</div></div>`;
+        html += `<div class="flex-container"><div class="flex1">`;
+        html += `<label for="${id}-api-key"><small>API Key</small></label>`;
+        html += `<div class="dle-conn-key-wrap" style="display:flex; gap: var(--dle-space-2); align-items:center;">`;
+        html += `<input id="${id}-api-key" type="password" class="text_pole flex1" autocomplete="off" spellcheck="false" placeholder="sk-…" />`;
+        html += `<button type="button" class="menu_button dle-conn-key-reveal" data-target="${id}-api-key" title="Show / hide the key" aria-label="Show or hide the API key"><i class="fa-solid fa-eye" aria-hidden="true"></i></button>`;
+        html += `</div></div></div>`;
+        html += `<div class="flex-container">`;
+        html += `<div class="flex1"><label for="${id}-api-format"><small>API Format</small></label>`;
+        html += `<select id="${id}-api-format" class="text_pole">`;
+        html += `<option value="auto">Auto-detect</option>`;
+        html += `<option value="openai">OpenAI-compatible (/chat/completions)</option>`;
+        html += `<option value="anthropic">Anthropic (/v1/messages)</option>`;
+        html += `</select></div></div>`;
+        html += `<label class="checkbox_label" for="${id}-api-cors" title="Send the request through SillyTavern's server instead of the browser. Needed when the endpoint doesn't allow browser (CORS) requests. Requires enableCorsProxy: true in config.yaml.">`;
+        html += `<input id="${id}-api-cors" type="checkbox" /><span>Route through SillyTavern's CORS proxy</span></label>`;
+        html += `</div>`;
+
         html += `<div class="flex-container ${id}-model-row">`;
         html += `<div class="flex1"><label for="${id}-model"><small>Model Override</small></label>`;
         html += `<input id="${id}-model" type="text" class="text_pole" placeholder="Leave empty to use profile model" />`;
@@ -717,6 +757,10 @@ function populateAccordions($container) {
         $c(`input[name="${id}-mode"][value="${mode}"]`).prop('checked', true);
         populateProfileDropdownIn($container, `${id}-profile-select`, config.profileIdKey);
         $c(`#${id}-proxy-url`).val(settings[config.proxyUrlKey] || '');
+        $c(`#${id}-api-url`).val(settings[config.apiUrlKey] || '');
+        $c(`#${id}-api-key`).val(settings[config.apiKeyKey] || '');
+        $c(`#${id}-api-format`).val(settings[config.apiFormatKey] || 'auto');
+        $c(`#${id}-api-cors`).prop('checked', !!settings[config.apiCorsKey]);
         $c(`#${id}-model`).val(settings[config.modelKey] || '');
         $c(`#${id}-max-tokens`).val(settings[config.maxTokensKey]);
         $c(`#${id}-timeout`).val(settings[config.timeoutKey]);
@@ -734,6 +778,7 @@ function updateAccordionVisibility($container, toolKey) {
 
     const isProfile = mode === 'profile';
     const isProxy = mode === 'proxy';
+    const isDirect = mode === 'direct';
     const isInherit = mode === 'inherit';
     const isSt = mode === 'st';
 
@@ -741,12 +786,19 @@ function updateAccordionVisibility($container, toolKey) {
     // v2.5: proxy mode deprecated; force-hide proxy URL row regardless of legacy
     // settings state (migration nukes proxy mode, but defend the UI too).
     $container.find(`.${id}-proxy-row`).hide();
+    $container.find(`.${id}-direct-row`).toggle(isDirect);
     $container.find(`.${id}-inherit-note`).toggle(isInherit);
     // Model row: hidden in 'st' mode (override unavailable), shown otherwise.
     $container.find(`.${id}-model-row`).toggle(!isSt);
 
     const $modelInput = $container.find(`#${id}-model`);
-    if (isProfile || (isInherit && settings.aiSearchConnectionMode === 'profile')) {
+    const $modelLabel = $container.find(`.${id}-model-row label[for="${id}-model"] small`);
+    // In direct mode the model is REQUIRED (no profile to fall back on), so the
+    // label stops calling itself an "override" and says so.
+    $modelLabel.text(isDirect ? 'Model (required)' : 'Model Override');
+    if (isDirect) {
+        $modelInput.attr('placeholder', 'gpt-4o-mini / claude-haiku-4-5-20251001');
+    } else if (isProfile || (isInherit && settings.aiSearchConnectionMode === 'profile')) {
         let hint = '';
         const profileIdKey = isInherit ? 'aiSearchProfileId' : config.profileIdKey;
         try {
@@ -756,6 +808,8 @@ function updateAccordionVisibility($container, toolKey) {
         $modelInput.attr('placeholder', hint ? `Profile: ${hint}` : 'Leave empty to use profile model');
     } else if (isProxy || (isInherit && settings.aiSearchConnectionMode === 'proxy')) {
         $modelInput.attr('placeholder', 'claude-haiku-4-5-20251001');
+    } else if (isInherit && settings.aiSearchConnectionMode === 'direct') {
+        $modelInput.attr('placeholder', settings.aiSearchModel || 'Leave empty to inherit from AI Search');
     } else if (isInherit) {
         $modelInput.attr('placeholder', 'Leave empty to inherit from AI Search');
     }
@@ -782,6 +836,19 @@ function updateAccordionBadge($container, toolKey) {
             }
         } else {
             $badge.text('No profile selected').css('opacity', '0.5');
+        }
+    } else if (mode === 'direct') {
+        const url = (settings[config.apiUrlKey] || '').trim();
+        if (!url) {
+            $badge.text('No API URL set').css('opacity', '0.5');
+        } else {
+            let host = url;
+            try { const u = new URL(url); host = u.host; } catch { /* show the raw string */ }
+            const missing = [];
+            if (!settings[config.apiKeyKey]) missing.push('key');
+            if (!settings[config.modelKey] && config.isRoot) missing.push('model');
+            $badge.text(`Direct: ${host}${missing.length ? ` (no ${missing.join(' / ')})` : ''}`)
+                .css('opacity', missing.length ? '0.5' : '0.7');
         }
     } else if (mode === 'proxy') {
         const url = settings[config.proxyUrlKey] || 'http://127.0.0.1:42069';
@@ -883,6 +950,57 @@ function bindAccordionEvents($container) {
         updateAccordionBadge($container, toolKey);
     });
 
+    $section.on('input', 'input[id$="-api-url"]', function () {
+        const $accordion = $(this).closest('.dle-conn-accordion');
+        const toolKey = $accordion.data('tool');
+        const config = TOOL_CONNECTION_CONFIGS[toolKey];
+        settings[config.apiUrlKey] = String($(this).val()).trim();
+        invalidateSettingsCache();
+        saveSettingsDebounced();
+        updateAccordionBadge($container, toolKey);
+    });
+
+    $section.on('input', 'input[id$="-api-key"]', function () {
+        const $accordion = $(this).closest('.dle-conn-accordion');
+        const toolKey = $accordion.data('tool');
+        const config = TOOL_CONNECTION_CONFIGS[toolKey];
+        // No .trim() of interior characters — only the stray whitespace a paste
+        // picks up. Keys are opaque; mangling them produces a baffling 401.
+        settings[config.apiKeyKey] = String($(this).val()).trim();
+        invalidateSettingsCache();
+        saveSettingsDebounced();
+        updateAccordionBadge($container, toolKey);
+    });
+
+    $section.on('change', 'select[id$="-api-format"]', function () {
+        const $accordion = $(this).closest('.dle-conn-accordion');
+        const toolKey = $accordion.data('tool');
+        const config = TOOL_CONNECTION_CONFIGS[toolKey];
+        settings[config.apiFormatKey] = String($(this).val()) || 'auto';
+        invalidateSettingsCache();
+        saveSettingsDebounced();
+    });
+
+    $section.on('change', 'input[id$="-api-cors"]', function () {
+        const $accordion = $(this).closest('.dle-conn-accordion');
+        const toolKey = $accordion.data('tool');
+        const config = TOOL_CONNECTION_CONFIGS[toolKey];
+        settings[config.apiCorsKey] = $(this).prop('checked');
+        invalidateSettingsCache();
+        saveSettingsDebounced();
+    });
+
+    // Reveal toggle — flips the input type in place. The value never leaves the
+    // field, so nothing is copied into the DOM as plain text.
+    $section.on('click', '.dle-conn-key-reveal', function (e) {
+        e.preventDefault();
+        const $input = $container.find(`#${$(this).data('target')}`);
+        const revealed = $input.attr('type') === 'text';
+        $input.attr('type', revealed ? 'password' : 'text');
+        $(this).find('i').toggleClass('fa-eye', revealed).toggleClass('fa-eye-slash', !revealed);
+        $(this).attr('aria-pressed', String(!revealed));
+    });
+
     $section.on('input', 'input[id$="-model"]', function () {
         const $accordion = $(this).closest('.dle-conn-accordion');
         const toolKey = $accordion.data('tool');
@@ -890,6 +1008,7 @@ function bindAccordionEvents($container) {
         settings[config.modelKey] = String($(this).val()).trim();
         invalidateSettingsCache();
         saveSettingsDebounced();
+        updateAccordionBadge($container, toolKey);
     });
 
     $section.on('input', 'input[id$="-max-tokens"]', function () {
@@ -2059,8 +2178,14 @@ function bindPopupEvents($container) {
         saveSettingsDebounced();
         if (enabled) {
             const config = resolveConnectionConfig('librarian');
-            if (config.mode === 'profile' && !config.profileId) {
-                toastr.warning('Librarian needs an AI connection profile. Opening settings...', 'DeepLore', { timeOut: 6000 });
+            const missingProfile = config.mode === 'profile' && !config.profileId;
+            const missingDirect = config.mode === 'direct' && (!config.apiUrl || !config.model);
+            if (missingProfile || missingDirect) {
+                toastr.warning(
+                    missingDirect
+                        ? 'Librarian is set to Direct API but is missing an API URL or model. Opening settings...'
+                        : 'Librarian needs an AI connection profile. Opening settings...',
+                    'DeepLore', { timeOut: 6000 });
                 requestAnimationFrame(() => {
                     const nav = $container.data('dleNav');
                     const $tab = $container.find('.dle-settings-tab[data-settings-tab="ai-connections"]');
@@ -2183,6 +2308,20 @@ function bindPopupEvents($container) {
                 if (!settings.aiSearchProfileId) throw new Error('No connection profile selected');
                 await callViaProfile('You are a test assistant. Respond with exactly: {"ok": true}', 'Test. Respond: {"ok": true}', 64, settings.aiSearchTimeout);
                 const m = getProfileModelHint(); statusEl.text(`Connected${m ? ' (' + m + ')' : ''}`).addClass('success').removeClass('failure');
+            } else if (settings.aiSearchConnectionMode === 'direct') {
+                if (!settings.aiSearchApiUrl) throw new Error('Direct API mode requires an API URL');
+                if (!settings.aiSearchModel) throw new Error('Direct API mode requires a model name');
+                const data = await testDirectConnection({
+                    apiUrl: settings.aiSearchApiUrl,
+                    apiKey: settings.aiSearchApiKey,
+                    model: settings.aiSearchModel,
+                    format: settings.aiSearchApiFormat,
+                    viaCorsProxy: settings.aiSearchApiViaCorsProxy,
+                    timeout: settings.aiSearchTimeout,
+                    signal: ctrl.signal,
+                });
+                if (data.aborted) { statusEl.text('Cancelled').removeClass('success failure'); }
+                else { statusEl.text(data.ok ? `Connected (${settings.aiSearchModel})` : `Failed: ${data.error}`).toggleClass('success', data.ok).toggleClass('failure', !data.ok); }
             } else {
                 if (!settings.aiSearchModel) throw new Error('Proxy mode requires a model name');
                 const data = await testProxyConnection(settings.aiSearchProxyUrl, settings.aiSearchModel, ctrl.signal);
@@ -2325,32 +2464,15 @@ function bindPopupEvents($container) {
         const savedVaults = JSON.parse(JSON.stringify(settings.vaults || []));
         const savedPort = settings.obsidianPort;
         const savedKey = settings.obsidianApiKey;
-        const savedConnections = {
-            aiSearchConnectionMode: settings.aiSearchConnectionMode,
-            aiSearchProfileId: settings.aiSearchProfileId,
-            aiSearchProxyUrl: settings.aiSearchProxyUrl,
-            aiSearchModel: settings.aiSearchModel,
-            scribeConnectionMode: settings.scribeConnectionMode,
-            scribeProfileId: settings.scribeProfileId,
-            scribeProxyUrl: settings.scribeProxyUrl,
-            scribeModel: settings.scribeModel,
-            autoSuggestConnectionMode: settings.autoSuggestConnectionMode,
-            autoSuggestProfileId: settings.autoSuggestProfileId,
-            autoSuggestProxyUrl: settings.autoSuggestProxyUrl,
-            autoSuggestModel: settings.autoSuggestModel,
-            librarianConnectionMode: settings.librarianConnectionMode,
-            librarianProfileId: settings.librarianProfileId,
-            librarianProxyUrl: settings.librarianProxyUrl,
-            librarianModel: settings.librarianModel,
-            aiNotepadConnectionMode: settings.aiNotepadConnectionMode,
-            aiNotepadProfileId: settings.aiNotepadProfileId,
-            aiNotepadProxyUrl: settings.aiNotepadProxyUrl,
-            aiNotepadModel: settings.aiNotepadModel,
-            optimizeKeysConnectionMode: settings.optimizeKeysConnectionMode,
-            optimizeKeysProfileId: settings.optimizeKeysProfileId,
-            optimizeKeysProxyUrl: settings.optimizeKeysProxyUrl,
-            optimizeKeysModel: settings.optimizeKeysModel,
-        };
+        // Direct API fields (ApiUrl/ApiKey/ApiFormat/ApiViaCorsProxy) ride along with
+        // mode/profile/model — losing a pasted endpoint + key on a settings reset is
+        // the same data loss as losing a profile binding.
+        const savedConnections = {};
+        for (const t of ['aiSearch', 'scribe', 'autoSuggest', 'librarian', 'aiNotepad', 'optimizeKeys']) {
+            for (const suffix of ['ConnectionMode', 'ProfileId', 'ProxyUrl', 'Model', 'ApiUrl', 'ApiKey', 'ApiFormat', 'ApiViaCorsProxy']) {
+                savedConnections[t + suffix] = settings[t + suffix];
+            }
+        }
 
         for (const [key, value] of Object.entries(defaultSettings)) {
             settings[key] = (typeof value === 'object' && value !== null)

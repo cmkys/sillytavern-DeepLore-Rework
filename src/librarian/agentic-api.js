@@ -10,6 +10,7 @@ import { main_api, CONNECT_API_MAP } from '../../../../../../script.js';
 import { getContext } from '../../../../../extensions.js';
 import { resolveConnectionConfig } from '../../settings.js';
 import { validateProxyUrl } from '../ai/proxy-api.js';
+import { callDirectApiRaw, resolveDirectFormat } from '../ai/direct-api.js';
 import { abortWith } from '../diagnostics/interceptors.js';
 import { isUnderlyingClaudeModel } from './agentic-api-pure.js';
 
@@ -78,6 +79,12 @@ export function isReasoningOnlyModel(model) {
  */
 export function getResolvedModel(connConfig) {
     connConfig = connConfig || resolveConnectionConfig('librarian');
+    if (connConfig.mode === 'direct') {
+        // Direct API: the configured model IS the model — there is no profile
+        // and no ST global to fall back to (a global fallback would silently
+        // send a model the endpoint has never heard of).
+        return connConfig.model || '';
+    }
     if (connConfig.mode === 'proxy') {
         // v2.5 dead-head: Custom Proxy removed. Don't claim a proxy model exists —
         // dispatch (callAI / callWithTools) will refuse before any model is needed.
@@ -161,6 +168,14 @@ export function _providerFormatForSource(source) {
  */
 export function getResolvedLibrarianSource(connConfig) {
     connConfig = connConfig || resolveConnectionConfig('librarian');
+    if (connConfig.mode === 'direct') {
+        // No ST chat_completion_source exists for a direct endpoint. Map the
+        // wire format onto the closest source token so downstream format logic
+        // (getProviderFormat) resolves 'claude' vs 'openai' correctly.
+        return resolveDirectFormat(connConfig.apiUrl, connConfig.apiFormat) === 'anthropic'
+            ? 'claude'
+            : 'openai';
+    }
     if (connConfig.mode === 'proxy') {
         // v2.5 dead-head: Custom Proxy removed. No source — dispatch refuses first.
         return null;
@@ -190,6 +205,14 @@ export function isToolCallingSupported(model) {
     // context directly rather than calling getActiveProfileId, which throws
     // when no profile is selected — this gate must return false, not raise.
     const resolved = resolveConnectionConfig('librarian');
+    if (resolved.mode === 'direct') {
+        // Both wire formats support tools natively; DLE builds the request
+        // itself, so ST's main_api/source gates below don't apply. The only
+        // real disqualifier is a reasoning-only model that can't call tools.
+        if (!resolved.apiUrl) return false;
+        const directModel = model || getResolvedModel(resolved);
+        return !(directModel && isReasoningOnlyModel(directModel));
+    }
     if (resolved.mode === 'proxy') {
         // v2.5 dead-head: Custom Proxy removed. Report no tool support so the
         // Librarian falls back to its non-tool path — that path then ALSO refuses
@@ -231,6 +254,9 @@ export function getProviderFormat(connConfig) {
     // would have dispatched — in proxy mode the dispatch throws first, so a
     // null format here is never reached at runtime.
     const resolved = connConfig || resolveConnectionConfig('librarian');
+    if (resolved.mode === 'direct') {
+        return resolveDirectFormat(resolved.apiUrl, resolved.apiFormat) === 'anthropic' ? 'claude' : 'openai';
+    }
     if (resolved.mode === 'proxy') return null;
     // P1-6: derive the format from the RESOLVED Librarian profile's source, NOT
     // global `oai_settings.chat_completion_source`. Otherwise a Librarian→Claude
@@ -434,6 +460,41 @@ export async function callWithTools(messages, tools, toolChoice, maxTokens, sign
         throw new Error('Custom Proxy mode was removed in v2.5. Pick a Connection Profile in DLE Settings → Setup → AI Connections.');
     }
 
+    // Resolve once: `connConfig` (above) is the single resolve for this call.
+    // Thread it into format + underlying-Claude detection so neither re-calls
+    // resolveConnectionConfig('librarian') (→ getSettings()) again this round-trip.
+    const format = getProviderFormat(connConfig);
+
+    if (connConfig.mode === 'direct') {
+        // Direct API: we issue the request ourselves. The raw provider envelope
+        // is returned unchanged because parseToolCalls / getTextContent / getUsage
+        // already read both native shapes (Anthropic content[] and OpenAI
+        // choices[]) — the same envelopes ST hands back with extractData:false.
+        //
+        // tool_choice: the caller-side normalization below runs for CMRS. Here
+        // the Claude-shaped string ('auto'|'any'|'none') is wrapped into the
+        // object form Anthropic expects inside direct-api.js, and OpenAI-shaped
+        // values pass through untouched.
+        let directToolChoice = toolChoice;
+        if (typeof toolChoice === 'string' && format === 'claude') {
+            const claudeModeMap = { auto: 'auto', required: 'any', none: 'none' };
+            directToolChoice = claudeModeMap[toolChoice] || 'auto';
+        }
+        return await callDirectApiRaw({
+            apiUrl: connConfig.apiUrl,
+            apiKey: connConfig.apiKey,
+            model: connConfig.model,
+            messages,
+            maxTokens,
+            timeout: connConfig.timeout || 120000,
+            format: resolveDirectFormat(connConfig.apiUrl, connConfig.apiFormat),
+            viaCorsProxy: connConfig.apiViaCorsProxy,
+            tools,
+            toolChoice: directToolChoice,
+            signal,
+        });
+    }
+
     // #27 sym 2: Librarian must use its own configured profile, not ST's globally-active one.
     // No silent fallback — if Librarian's profile (or inherited aiSearch profile) is unset,
     // the user should be told to set it rather than silently inheriting whichever profile
@@ -441,11 +502,6 @@ export async function callWithTools(messages, tools, toolChoice, maxTokens, sign
     if (!connConfig.profileId) {
         throw new Error('Librarian needs a profile in AI Connections settings.');
     }
-
-    // Resolve once: `connConfig` (above) is the single resolve for this call.
-    // Thread it into format + underlying-Claude detection so neither re-calls
-    // resolveConnectionConfig('librarian') (→ getSettings()) again this round-trip.
-    const format = getProviderFormat(connConfig);
 
     // Normalize tool_choice per provider — ST wraps differently per backend:
     //   Claude backend: `{ type: request.body.tool_choice }` — needs Claude type strings.

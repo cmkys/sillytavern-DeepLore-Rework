@@ -76,9 +76,13 @@ export const defaultSettings = {
     aiNotepadRole: 0,
     aiNotepadPrompt: '',      // tag-mode instruction (empty = default)
     aiNotepadExtractPrompt: '', // extract-mode prompt (empty = default)
-    aiNotepadConnectionMode: 'inherit', // 'inherit' | 'profile' | 'proxy'
+    aiNotepadConnectionMode: 'inherit', // 'inherit' | 'st' | 'profile' | 'direct' | 'proxy' (legacy)
     aiNotepadProfileId: '',
     aiNotepadProxyUrl: 'http://127.0.0.1:42069',
+    aiNotepadApiUrl: '',
+    aiNotepadApiKey: '',
+    aiNotepadApiFormat: 'auto',
+    aiNotepadApiViaCorsProxy: false,
     aiNotepadModel: '',
     aiNotepadMaxTokens: 1024,
     aiNotepadTimeout: 30000,
@@ -95,6 +99,17 @@ export const defaultSettings = {
     aiSearchConnectionMode: 'profile',
     aiSearchProfileId: '',
     aiSearchProxyUrl: 'http://127.0.0.1:42069',
+    // Direct API mode (v2.6.3): talk to an endpoint directly instead of going
+    // through a SillyTavern Connection Profile. `aiSearchApiUrl` accepts a base
+    // ('https://api.openai.com/v1') or a full endpoint; `aiSearchApiFormat` is
+    // 'auto' | 'openai' | 'anthropic'; `aiSearchApiViaCorsProxy` re-routes
+    // through ST's /proxy bridge for endpoints that refuse browser CORS.
+    // NOTE: aiSearchModel is REQUIRED in direct mode — there is no profile to
+    // read a model from.
+    aiSearchApiUrl: '',
+    aiSearchApiKey: '',
+    aiSearchApiFormat: 'auto',
+    aiSearchApiViaCorsProxy: false,
     aiSearchModel: '',
     aiSearchMaxTokens: 1024,
     aiSearchTimeout: 20000,
@@ -115,6 +130,10 @@ export const defaultSettings = {
     scribeConnectionMode: 'inherit',
     scribeProfileId: '',
     scribeProxyUrl: 'http://127.0.0.1:42069',
+    scribeApiUrl: '',
+    scribeApiKey: '',
+    scribeApiFormat: 'auto',
+    scribeApiViaCorsProxy: false,
     scribeModel: '',
     scribeMaxTokens: 1024,
     scribeTimeout: 60000,
@@ -132,6 +151,10 @@ export const defaultSettings = {
     autoSuggestConnectionMode: 'inherit',
     autoSuggestProfileId: '',
     autoSuggestProxyUrl: 'http://127.0.0.1:42069',
+    autoSuggestApiUrl: '',
+    autoSuggestApiKey: '',
+    autoSuggestApiFormat: 'auto',
+    autoSuggestApiViaCorsProxy: false,
     autoSuggestModel: '',
     autoSuggestMaxTokens: 2048,
     autoSuggestTimeout: 30000,
@@ -147,6 +170,10 @@ export const defaultSettings = {
     optimizeKeysConnectionMode: 'inherit',
     optimizeKeysProfileId: '',
     optimizeKeysProxyUrl: 'http://127.0.0.1:42069',
+    optimizeKeysApiUrl: '',
+    optimizeKeysApiKey: '',
+    optimizeKeysApiFormat: 'auto',
+    optimizeKeysApiViaCorsProxy: false,
     optimizeKeysModel: '',
     optimizeKeysMaxTokens: 1024,
     optimizeKeysTimeout: 30000,
@@ -209,6 +236,10 @@ export const defaultSettings = {
     librarianConnectionMode: 'inherit', // intentionally separate from aiSearchConnectionMode — see CLAUDE.md
     librarianProfileId: '',
     librarianProxyUrl: 'http://127.0.0.1:42069',
+    librarianApiUrl: '',
+    librarianApiKey: '',
+    librarianApiFormat: 'auto',
+    librarianApiViaCorsProxy: false,
     librarianModel: '',                  // blank = inherit from AI Search.
     librarianSessionMaxTokens: 4096,
     librarianSessionTimeout: 120000,    // 120s headroom — opus-4-6 forced-final-response with thinking can exceed 60s.
@@ -272,23 +303,38 @@ export const defaultSettings = {
     settingsVersion: 5,
 };
 
-/** Per-tool settings-key map for resolveConnectionConfig(). */
+/**
+ * Per-tool settings-key map for resolveConnectionConfig().
+ *
+ * `apiUrl` / `apiKey` / `apiFormat` / `apiViaCorsProxy` back the Direct API
+ * connection mode (v2.6.3) — the endpoint DLE calls itself, with no Connection
+ * Profile in the path.
+ */
 const TOOL_SETTINGS_KEYS = {
-    aiSearch:    { mode: 'aiSearchConnectionMode', profileId: 'aiSearchProfileId', proxyUrl: 'aiSearchProxyUrl', model: 'aiSearchModel', maxTokens: 'aiSearchMaxTokens', timeout: 'aiSearchTimeout' },
-    scribe:     { mode: 'scribeConnectionMode', profileId: 'scribeProfileId', proxyUrl: 'scribeProxyUrl', model: 'scribeModel', maxTokens: 'scribeMaxTokens', timeout: 'scribeTimeout' },
-    autoSuggest: { mode: 'autoSuggestConnectionMode', profileId: 'autoSuggestProfileId', proxyUrl: 'autoSuggestProxyUrl', model: 'autoSuggestModel', maxTokens: 'autoSuggestMaxTokens', timeout: 'autoSuggestTimeout' },
-    aiNotepad:  { mode: 'aiNotepadConnectionMode', profileId: 'aiNotepadProfileId', proxyUrl: 'aiNotepadProxyUrl', model: 'aiNotepadModel', maxTokens: 'aiNotepadMaxTokens', timeout: 'aiNotepadTimeout' },
-    librarian:  { mode: 'librarianConnectionMode', profileId: 'librarianProfileId', proxyUrl: 'librarianProxyUrl', model: 'librarianModel', maxTokens: 'librarianSessionMaxTokens', timeout: 'librarianSessionTimeout' },
-    optimizeKeys: { mode: 'optimizeKeysConnectionMode', profileId: 'optimizeKeysProfileId', proxyUrl: 'optimizeKeysProxyUrl', model: 'optimizeKeysModel', maxTokens: 'optimizeKeysMaxTokens', timeout: 'optimizeKeysTimeout' },
+    aiSearch:    { mode: 'aiSearchConnectionMode', profileId: 'aiSearchProfileId', proxyUrl: 'aiSearchProxyUrl', model: 'aiSearchModel', maxTokens: 'aiSearchMaxTokens', timeout: 'aiSearchTimeout', apiUrl: 'aiSearchApiUrl', apiKey: 'aiSearchApiKey', apiFormat: 'aiSearchApiFormat', apiViaCorsProxy: 'aiSearchApiViaCorsProxy' },
+    scribe:     { mode: 'scribeConnectionMode', profileId: 'scribeProfileId', proxyUrl: 'scribeProxyUrl', model: 'scribeModel', maxTokens: 'scribeMaxTokens', timeout: 'scribeTimeout', apiUrl: 'scribeApiUrl', apiKey: 'scribeApiKey', apiFormat: 'scribeApiFormat', apiViaCorsProxy: 'scribeApiViaCorsProxy' },
+    autoSuggest: { mode: 'autoSuggestConnectionMode', profileId: 'autoSuggestProfileId', proxyUrl: 'autoSuggestProxyUrl', model: 'autoSuggestModel', maxTokens: 'autoSuggestMaxTokens', timeout: 'autoSuggestTimeout', apiUrl: 'autoSuggestApiUrl', apiKey: 'autoSuggestApiKey', apiFormat: 'autoSuggestApiFormat', apiViaCorsProxy: 'autoSuggestApiViaCorsProxy' },
+    aiNotepad:  { mode: 'aiNotepadConnectionMode', profileId: 'aiNotepadProfileId', proxyUrl: 'aiNotepadProxyUrl', model: 'aiNotepadModel', maxTokens: 'aiNotepadMaxTokens', timeout: 'aiNotepadTimeout', apiUrl: 'aiNotepadApiUrl', apiKey: 'aiNotepadApiKey', apiFormat: 'aiNotepadApiFormat', apiViaCorsProxy: 'aiNotepadApiViaCorsProxy' },
+    librarian:  { mode: 'librarianConnectionMode', profileId: 'librarianProfileId', proxyUrl: 'librarianProxyUrl', model: 'librarianModel', maxTokens: 'librarianSessionMaxTokens', timeout: 'librarianSessionTimeout', apiUrl: 'librarianApiUrl', apiKey: 'librarianApiKey', apiFormat: 'librarianApiFormat', apiViaCorsProxy: 'librarianApiViaCorsProxy' },
+    optimizeKeys: { mode: 'optimizeKeysConnectionMode', profileId: 'optimizeKeysProfileId', proxyUrl: 'optimizeKeysProxyUrl', model: 'optimizeKeysModel', maxTokens: 'optimizeKeysMaxTokens', timeout: 'optimizeKeysTimeout', apiUrl: 'optimizeKeysApiUrl', apiKey: 'optimizeKeysApiKey', apiFormat: 'optimizeKeysApiFormat', apiViaCorsProxy: 'optimizeKeysApiViaCorsProxy' },
 };
-
 /**
  * Resolve effective connection config. `inherit` mode pulls mode+profileId from aiSearch and
  * cascades model/proxyUrl (tool's own value wins if set, else aiSearch's). maxTokens/timeout
  * are always the tool's own — those tune the per-feature behavior, not the shared connection.
  *
+ * Direct API mode (v2.6.3): in `inherit` mode ALL FOUR direct fields come from
+ * AI Search — a tool's own apiUrl/apiKey are ignored until it explicitly selects
+ * `direct` itself. Two reasons. (1) The UI only shows a tool's direct fields in
+ * direct mode, so a per-field cascade would silently route an "inheriting" tool
+ * to a stale endpoint the user can't see. (2) Mixing them — AI Search's key with
+ * the tool's URL — would post one provider's credential to another. The per-tool
+ * MODEL override still applies (same endpoint, different model), which is the
+ * override people actually want.
+ *
  * @param {string} toolKey  'aiSearch' | 'scribe' | 'autoSuggest' | 'aiNotepad' | 'librarian' | 'optimizeKeys'
- * @returns {{ mode: string, profileId: string, proxyUrl: string, model: string, maxTokens: number, timeout: number }}
+ * @returns {{ mode: string, profileId: string, proxyUrl: string, model: string, maxTokens: number,
+ *            timeout: number, apiUrl: string, apiKey: string, apiFormat: string, apiViaCorsProxy: boolean }}
  */
 export function resolveConnectionConfig(toolKey) {
     const s = getSettings();
@@ -301,6 +347,14 @@ export function resolveConnectionConfig(toolKey) {
     const maxTokens = s[keys.maxTokens];
     const timeout = s[keys.timeout];
 
+    /** The four direct-API fields, taken from whichever tool owns the endpoint. */
+    const directFrom = (k) => ({
+        apiUrl: (s[k.apiUrl] || '').trim(),
+        apiKey: s[k.apiKey] || '',
+        apiFormat: s[k.apiFormat] || 'auto',
+        apiViaCorsProxy: !!s[k.apiViaCorsProxy],
+    });
+
     if (mode === 'inherit' && toolKey !== 'aiSearch') {
         const ai = TOOL_SETTINGS_KEYS.aiSearch;
         return {
@@ -310,6 +364,7 @@ export function resolveConnectionConfig(toolKey) {
             model: toolModel || s[ai.model],
             maxTokens,
             timeout,
+            ...directFrom(ai),
         };
     }
 
@@ -320,6 +375,7 @@ export function resolveConnectionConfig(toolKey) {
         model: toolModel,
         maxTokens,
         timeout,
+        ...directFrom(keys),
     };
 }
 
@@ -396,14 +452,20 @@ export const settingsConstraints = {
     // offers profile/proxy for the root (settings-ui.js supportedModes), but without
     // an enum whitelist an import/migration could land 'inherit'/'st'. Reset to the
     // 'profile' default on mismatch.
-    aiSearchConnectionMode: { enum: ['profile', 'proxy'] },
-    librarianConnectionMode: { enum: ['inherit', 'profile', 'proxy'] },
+    aiSearchConnectionMode: { enum: ['profile', 'direct', 'proxy'] },
+    librarianConnectionMode: { enum: ['inherit', 'profile', 'direct', 'proxy'] },
     librarianSystemPromptMode: { enum: ['default', 'append', 'override', 'strict-override'] },
     // BUG-AUDIT (Fix 12): missing whitelist would let invalid imports/migrations land an
     // unrecognized value, which deduplicateMultiVault then silently treated like 'first'
     // (drop duplicates instead of preserving). Safe default 'all' restored on mismatch.
     multiVaultConflictResolution: { enum: ['all', 'first', 'last', 'merge'] },
     responsePrefillMode: { enum: ['off', 'anthropic-only', 'all-providers'] },
+    aiSearchApiFormat: { enum: ['auto', 'openai', 'anthropic'] },
+    scribeApiFormat: { enum: ['auto', 'openai', 'anthropic'] },
+    autoSuggestApiFormat: { enum: ['auto', 'openai', 'anthropic'] },
+    aiNotepadApiFormat: { enum: ['auto', 'openai', 'anthropic'] },
+    librarianApiFormat: { enum: ['auto', 'openai', 'anthropic'] },
+    optimizeKeysApiFormat: { enum: ['auto', 'openai', 'anthropic'] },
 };
 
 // BUG-088: settings cache REMOVED. ST's native pattern is direct read of

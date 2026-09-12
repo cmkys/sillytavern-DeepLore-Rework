@@ -8,6 +8,25 @@ All notable changes to DeepLore are documented here. This file follows
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Direct API connection mode** — every AI feature can now connect straight to an API endpoint with a URL and key, instead of going through a SillyTavern Connection Profile. Pick **Direct API (URL + key)** in DLE Settings → Setup → AI Connections, paste an API URL (a base like `https://api.openai.com/v1` or the full endpoint), a key, and a model. The wire format is auto-detected — OpenAI-compatible (`/chat/completions`) or Anthropic (`/v1/messages`) — and can be overridden. That covers OpenAI, OpenRouter, Anthropic, Groq, DeepSeek, Mistral, xAI, Together, Gemini's OpenAI-compatible endpoint, and local runtimes (Ollama, LM Studio, llama.cpp, TabbyAPI — leave the key blank).
+
+  Available for all six tools (AI Search, Session Scribe, Auto Lorebook, AI Notepad, Librarian, Optimize Keys), including the Librarian's tool-calling loop. Tools set to **Inherit** take the whole direct connection (URL, key, format, CORS flag) from AI Search, with the usual per-tool model override on top — so a tool can never end up pairing AI Search's key with a different endpoint.
+
+  Direct requests are issued by the browser, so the endpoint has to allow CORS. When it doesn't, tick **Route through SillyTavern's CORS proxy** (requires `enableCorsProxy: true` in `config.yaml`); a browser CORS rejection — otherwise an opaque `TypeError` with no status — is rewritten into an error that names the host and points at that toggle. Private and loopback addresses are allowed on the browser path (local model runtimes are the point); the CORS-proxied path keeps the full server-side SSRF validator, since ST's server does that fetch. Cloud metadata endpoints are refused either way.
+
+  Diagnostics report the endpoint's host and path, the format, and whether a key is set — never the key itself. "Test message" and the AI Search "Test connection" button both probe direct connections live.
+
+### Changed
+
+- The SSRF validator and secret scrubber shared by the connection paths moved into `src/ai/url-safety.js`; `validateProxyUrl()` delegates to it with unchanged error messages.
+- Re-running the setup wizard no longer silently switches an existing Direct API setup back to (empty) profile mode — it only takes the wizard's answer when a profile is actually picked there.
+
+---
+
 ## [2.6.2] - 2026-07-04
 
 ### Fixed

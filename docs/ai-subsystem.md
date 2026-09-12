@@ -4,11 +4,86 @@ Code-level reference for the DLE AI subsystem. For pipeline flow see `CLAUDE.md`
 
 > **DEPRECATED v2.5 — Custom Proxy connection mode**: Proxy mode (`mode === 'proxy'`, direct Anthropic Messages API via ST's CORS bridge to claude-code-proxy) was dead-headed in v2.5. `callAI()` dispatch throws `"Custom Proxy mode was removed in v2.5..."` when invoked with `'proxy'`. Code paths in this doc (proxy-api.js, `callProxyViaCorsBridge`, proxy branches in the agentic API, proxy-related cache key fields, etc.) are preserved for rollback safety and remain documented below. The UI is hidden. Users with `*ConnectionMode === 'proxy'` are migrated to `'profile'` on boot (settingsVersion 3→4) and shown a one-shot popup. **Connection Profile (CMRS) is the only supported path.** See `docs/gotchas.md` #68 for migration semantics, rollback path, and test coverage.
 
-Source files: `src/ai/ai.js`, `src/ai/manifest.js`, `src/ai/proxy-api.js` (`@deprecated v2.5` — kept for rollback), `src/ai/claude-adaptive-check.js`, `src/ai/models.js`, `settings.js` (`resolveConnectionConfig()` + `TOOL_SETTINGS_KEYS`), `src/state.js` (circuit breaker state + `recordAiFailure`/`recordAiSuccess`/`isAiCircuitOpen`/`tryAcquireHalfOpenProbe`/`releaseHalfOpenProbe`), `src/helpers.js` (`extractAiResponseClient`/`normalizeResults`/`clusterEntries`/`buildCategoryManifest`), `src/librarian/agentic-api.js` (agentic loop API layer).
+Source files: `src/ai/ai.js`, `src/ai/manifest.js`, `src/ai/direct-api.js` (Direct API mode), `src/ai/url-safety.js` (shared URL validators + secret scrubber), `src/ai/proxy-api.js` (`@deprecated v2.5` — kept for rollback), `src/ai/claude-adaptive-check.js`, `src/ai/models.js`, `settings.js` (`resolveConnectionConfig()` + `TOOL_SETTINGS_KEYS`), `src/state.js` (circuit breaker state + `recordAiFailure`/`recordAiSuccess`/`isAiCircuitOpen`/`tryAcquireHalfOpenProbe`/`releaseHalfOpenProbe`), `src/helpers.js` (`extractAiResponseClient`/`normalizeResults`/`clusterEntries`/`buildCategoryManifest`), `src/librarian/agentic-api.js` (agentic loop API layer).
 
 ---
 
 ## 1. Connection Routing
+
+### Connection modes
+
+| Mode | Who builds the request | Settings keys |
+|------|------------------------|---------------|
+| `profile` | SillyTavern's Connection Manager (CMRS) | `<tool>ProfileId` |
+| `direct` | DLE itself (`src/ai/direct-api.js`) | `<tool>ApiUrl`, `<tool>ApiKey`, `<tool>ApiFormat`, `<tool>ApiViaCorsProxy`, `<tool>Model` |
+| `st` | ST's active connection via `generateQuietPrompt` (scribe / autoSuggest only) | — |
+| `inherit` | resolved to AI Search's mode upstream | — |
+| `proxy` | **DEPRECATED v2.5** — dispatch throws | `<tool>ProxyUrl` |
+
+### Direct API mode (v2.6.3) -- direct-api.js
+
+Added because Connection Manager profiles are a moving target: a renamed or
+deleted profile, a completion preset whose `reasoning_effort` ST rejects, or a
+source ST maps differently than the user expects all present as "AI search
+stopped working" with no obvious fix. Direct mode removes ST from the request
+path — DLE builds the body, sets the auth header, and parses the response.
+
+Two wire formats, chosen by `<tool>ApiFormat` (`auto` | `openai` | `anthropic`):
+
+- **`openai`** — `POST {base}/chat/completions`, `Authorization: Bearer <key>`.
+  Covers OpenAI, OpenRouter, Groq, DeepSeek, Mistral, xAI, Together, Gemini's
+  OpenAI-compatible endpoint, and local runtimes (Ollama, LM Studio, llama.cpp,
+  TabbyAPI, KoboldCpp).
+- **`anthropic`** — `POST {base}/v1/messages`, `x-api-key` + `anthropic-version`
+  + `anthropic-dangerous-direct-browser-access` (Anthropic blocks browser-origin
+  requests without that last one).
+
+`auto` detects from the URL (`detectDirectFormat`): an Anthropic host or a
+`/messages` path means anthropic; an explicit `/chat/completions` path wins over
+the host (relays expose both); everything else is openai.
+
+**Endpoint building** (`buildDirectEndpoint`): accepts a bare host, a versioned
+base, or a complete endpoint. `/chat/completions` (or `/v1/messages`) is appended
+only when missing — pasting the exact URL from a provider's docs must not grow a
+second suffix. Query strings and hashes on a base URL are dropped.
+
+**The model is required.** There is no profile to read one from, so
+`callDirectApiRaw` refuses before any fetch when `<tool>Model` is empty rather
+than letting the provider answer with an opaque 400.
+
+**Parity with the profile path**: `jsonSchema` becomes `response_format` on
+openai and a forced single-tool call on anthropic (what ST does on Claude);
+`cacheHints` become `cache_control` blocks on anthropic and a plain concatenation
+on openai; `aiForceUserRole` folds the system prompt into the user turn.
+`disableThinkingOnClaude` is a no-op — direct mode never sends a `thinking`
+block, so the forced-tool_choice 400 it guards cannot arise.
+
+**CORS.** The browser issues these requests, so the endpoint must send
+`Access-Control-Allow-Origin`. When it doesn't, `<tool>ApiViaCorsProxy` re-routes
+through ST's `/proxy/:url` bridge (needs `enableCorsProxy: true`). An opaque
+`TypeError` from a non-proxied fetch is rewritten into an actionable
+"endpoint refused the request or blocked it via CORS" error with
+`err.corsSuspected = true` — raw, it is the least diagnosable failure in the mode.
+
+**URL safety is per-transport** (`src/ai/url-safety.js`):
+
+- Browser-issued (`viaCorsProxy: false`) → `assertNoMetadataEndpoint`. Private
+  and loopback addresses are ALLOWED — local model runtimes are a first-class
+  use case and the browser reaching its own machine is not SSRF. Cloud metadata
+  services are still refused.
+- CORS-bridged (`viaCorsProxy: true`) → `assertNoServerSideSsrf`, the full
+  validator extracted from `proxy-api.js` (private/CGNAT/link-local/metadata
+  blocked, `127.0.0.1` allowed). ST's server does that fetch, so it may sit on a
+  LAN the browser cannot otherwise reach.
+
+`validateProxyUrl()` in `proxy-api.js` now delegates to `assertNoServerSideSsrf`;
+messages are unchanged.
+
+**Diagnostics never carry the key.** The state snapshot records
+`directEndpoint` (origin + path only, so a query-string credential is dropped),
+`directFormat`, `directViaCorsProxy`, and `directHasKey` (a boolean). The
+scrubber's `SENSITIVE_KEY_RE` also matches `<tool>ApiKey` by name, so a raw
+settings dump is redacted regardless.
 
 ### `resolveConnectionConfig(toolKey)` -- settings.js
 
@@ -29,7 +104,7 @@ const TOOL_SETTINGS_KEYS = {
 resolveConnectionConfig(toolKey) -> config
 ```
 
-**Inherit fallback** (in `resolveConnectionConfig()`): When a tool's mode is `'inherit'` and `toolKey !== 'aiSearch'`, mode and profileId resolve from AI Search's settings. Model and proxyUrl cascade: tool's own value if set, else AI Search's. `maxTokens` and `timeout` always come from the tool's own settings (never inherited). **v2.5:** inherit still works as a chain, but the resolved mode can no longer BE `'proxy'` — aiSearch's mode is forced to `'profile'` by migration (gotcha #68), so the inherit chain always lands on profile.
+**Inherit fallback** (in `resolveConnectionConfig()`): When a tool's mode is `'inherit'` and `toolKey !== 'aiSearch'`, mode and profileId resolve from AI Search's settings. Model and proxyUrl cascade: tool's own value if set, else AI Search's. **All four Direct API fields come from AI Search in inherit mode** — a tool's own `apiUrl`/`apiKey` are ignored until it explicitly selects `direct` itself. A per-field cascade would (a) route an "inheriting" tool to a stale per-tool endpoint the UI never shows (direct fields render only in direct mode) and (b) allow AI Search's *key* to be paired with the tool's *URL* — posting one provider's credential to another. The per-tool MODEL override still applies, which is the override people actually want (same endpoint, cheaper model). `maxTokens` and `timeout` always come from the tool's own settings (never inherited). **v2.5:** inherit still works as a chain, but the resolved mode can no longer BE `'proxy'` — aiSearch's mode is forced to `'profile'` by migration (gotcha #68), so the inherit chain always lands on profile.
 
 **Gotchas:**
 - AI Search itself cannot inherit (it IS the root). If `aiSearchConnectionMode === 'inherit'`, that value flows through unchanged -- callers treat it as the literal mode string.
@@ -43,7 +118,8 @@ resolveConnectionConfig(toolKey) -> config
 The Librarian's agentic generation loop uses a **separate API path** from `callAI()`. `callWithTools()` in `agentic-api.js` dispatches based on the resolved Librarian connection mode:
 
 - ~~**Proxy mode** (`resolveConnectionConfig('librarian').mode === 'proxy'`): calls `callWithToolsViaProxy()`, which sends directly to an Anthropic-compatible proxy via ST's CORS bridge (`/proxy/` endpoint). Tools are converted from OpenAI to Anthropic format. System messages are extracted into the `system` field. `isToolCallingSupported()` returns true, `getProviderFormat()` returns `'claude'`, and `getActiveMaxTokens()` uses the Librarian's configured maxTokens.~~ **DEPRECATED v2.5** — dispatch throws. The four call sites in `agentic-api.js` still exist (rollback-safe) but are unreachable in production.
-- **Profile mode** (default and only supported path as of v2.5): calls `ConnectionManagerRequestService.sendRequest()` using the Librarian's own configured profile (`connConfig.profileId`, resolved from `librarianProfileId` or — if mode is `inherit` — the aiSearch profile). NOT the globally-active main-chat profile. Unset profile throws hard error rather than silently inheriting active (#27 sym 2).
+- **Direct mode** (`mode === 'direct'`): calls `callDirectApiRaw()` with the tool definitions. The RAW provider envelope is returned unchanged, because `parseToolCalls` / `getTextContent` / `getUsage` already read both native shapes (Anthropic `content[]`, OpenAI `choices[]`) — the same envelopes ST returns with `extractData: false`. `getProviderFormat()` returns `'claude'` for the anthropic wire format and `'openai'` otherwise, so the loop's assistant/tool-result message builders emit the right shape; `getResolvedModel()` returns the configured model with NO ST-global fallback (a global model name the endpoint never heard of would 400); `isToolCallingSupported()` is true unless the model is reasoning-only. OpenAI-shaped tool definitions are translated to Anthropic's `{name, description, input_schema}` shape in `direct-api.js`.
+- **Profile mode** (the default): calls `ConnectionManagerRequestService.sendRequest()` using the Librarian's own configured profile (`connConfig.profileId`, resolved from `librarianProfileId` or — if mode is `inherit` — the aiSearch profile). NOT the globally-active main-chat profile. Unset profile throws hard error rather than silently inheriting active (#27 sym 2).
 
 The Librarian profile setting (`librarianConnectionMode`, `librarianProfileId`, etc.) is also used by Emma's conversation loop in `librarian-session.js` (the review popup).
 
@@ -68,12 +144,13 @@ Unified router. All AI features call this, never `callViaProfile`/`callProxyViaC
 
 ```js
 callAI(systemPrompt, userMessage, connectionConfig) -> {text, usage}
-// connectionConfig: { mode, profileId, proxyUrl, model, maxTokens, timeout, cacheHints, signal, skipThrottle, caller, jsonSchema, disableThinkingOnClaude }
+// connectionConfig: { mode, profileId, proxyUrl, model, maxTokens, timeout, cacheHints, signal, skipThrottle, caller, jsonSchema, disableThinkingOnClaude,
+//                      apiUrl, apiKey, apiFormat, apiViaCorsProxy }   // ← the last four are Direct API mode
 ```
 
-Dispatches to `callViaProfile()` when `mode === 'profile'`, or ~~`callProxyViaCorsBridge()` when `mode === 'proxy'`~~ **(DEPRECATED v2.5 — throws `"Custom Proxy mode was removed in v2.5..."`)**. Proxy mode default model `'claude-haiku-4-5-20251001'` is dead code retained for rollback. See gotcha #68.
+Dispatches to `callViaProfile()` when `mode === 'profile'`, `callDirectApi()` when `mode === 'direct'`, or ~~`callProxyViaCorsBridge()` when `mode === 'proxy'`~~ **(DEPRECATED v2.5 — throws `"Custom Proxy mode was removed in v2.5..."`)**. Proxy mode default model `'claude-haiku-4-5-20251001'` is dead code retained for rollback. See gotcha #68.
 
-**Dispatch is an explicit whitelist** (AI-M3, 2026-05-22): the dispatch is `if (mode === 'profile') ... else if (mode === 'proxy') throw ... else throw`. `'inherit'` MUST be resolved by `resolveConnectionConfig` upstream — `callAI` throws loudly if it ever sees `'inherit'` or any other unknown value rather than silently falling through to the proxy branch with an empty `proxyUrl` (which would trip the circuit breaker on the second call). If you add a new mode, extend the whitelist explicitly — never widen the `else` branch. **v2.5 update:** the `'proxy'` branch now throws unconditionally (was: call `callProxyViaCorsBridge()`); the rollback path restores the dispatch.
+**Dispatch is an explicit whitelist** (AI-M3, 2026-05-22): the dispatch is `if (mode === 'profile') ... else if (mode === 'direct') ... else if (mode === 'proxy') throw ... else throw`. `'inherit'` MUST be resolved by `resolveConnectionConfig` upstream — `callAI` throws loudly if it ever sees `'inherit'` or any other unknown value rather than silently falling through to the proxy branch with an empty `proxyUrl` (which would trip the circuit breaker on the second call). If you add a new mode, extend the whitelist explicitly — never widen the `else` branch. **v2.5 update:** the `'proxy'` branch now throws unconditionally (was: call `callProxyViaCorsBridge()`); the rollback path restores the dispatch.
 
 **`caller` label**: All callers now pass a `caller` string (e.g. `'aiSearch'`, `'scribe'`, `'autoSuggest'`, `'hierarchicalPreFilter'`, `'aiNotepad'`, `'optimizeKeys'`). This label is recorded in the `aiCallBuffer` for per-call diagnostics.
 
