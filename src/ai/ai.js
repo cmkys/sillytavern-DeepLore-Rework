@@ -451,6 +451,34 @@ export async function callAI(systemPrompt, userMessage, connectionConfig) {
     return result;
 }
 
+/**
+ * The connection fields aiSearch's own `callAI` sites pass through.
+ *
+ * Both sites build their config from a settings SNAPSHOT (`settingsIn`, threaded
+ * by the pipeline so one run sees one consistent settings object) instead of
+ * calling `resolveConnectionConfig()`, which always reads LIVE settings. That is
+ * deliberate — but it means the field list is hand-maintained, and when Direct
+ * API mode was added the list silently omitted its four fields: AI search threw
+ * "Direct API mode needs an API URL" on every call while the settings UI's own
+ * test button (which DOES resolve) worked fine. Centralized here so the two
+ * sites cannot drift from each other or from `TOOL_SETTINGS_KEYS` again.
+ *
+ * @param {typeof import('../../settings.js').defaultSettings} settings
+ */
+function aiSearchConnectionFields(settings) {
+    return {
+        mode: settings.aiSearchConnectionMode,
+        profileId: settings.aiSearchProfileId,
+        proxyUrl: settings.aiSearchProxyUrl,
+        model: settings.aiSearchModel,
+        // Direct API mode — callAI destructures these off connectionConfig.
+        apiUrl: settings.aiSearchApiUrl,
+        apiKey: settings.aiSearchApiKey,
+        apiFormat: settings.aiSearchApiFormat,
+        apiViaCorsProxy: settings.aiSearchApiViaCorsProxy,
+    };
+}
+
 /** Inject settings into the extracted pure manifest builder. Pipeline callers pass
  * runPipeline's settings snapshot (gotcha #94); others default to live getSettings(). */
 export function buildCandidateManifest(candidates, excludeBootstrap = false, settings = null) {
@@ -551,10 +579,7 @@ Example: ["Characters - Inner Circle", "Locations - Districts", "Lore - Magic Sy
             // Same forced-thinking fallback class as aiSearch (ST staging #5236) —
             // this JSON category-selection call must also suppress Claude thinking.
             disableThinkingOnClaude: true,
-            mode: settings.aiSearchConnectionMode,
-            profileId: settings.aiSearchProfileId,
-            proxyUrl: settings.aiSearchProxyUrl,
-            model: settings.aiSearchModel,
+            ...aiSearchConnectionFields(settings),
             maxTokens: AI_PREFILTER_MAX_TOKENS,
             timeout: settings.aiSearchTimeout,
             skipThrottle: true, // BUG-006
@@ -1006,10 +1031,7 @@ export async function aiSearch(chat, candidateManifest, candidateHeader, snapsho
             // so ST's calculateClaudeBudgetTokens returns null and omits thinking.
             // Claude-only (zero non-Claude regression); fires for any Claude model.
             disableThinkingOnClaude: true,
-            mode: settings.aiSearchConnectionMode,
-            profileId: settings.aiSearchProfileId,
-            proxyUrl: settings.aiSearchProxyUrl,
-            model: settings.aiSearchModel,
+            ...aiSearchConnectionFields(settings),
             maxTokens: settings.aiSearchMaxTokens,
             timeout: settings.aiSearchTimeout,
             cacheHints,

@@ -720,6 +720,59 @@ test('DIRECT-WIRE-10: diagnostics report the direct endpoint without the key', (
     assertMatch(exp, /mode === 'direct'/, 'export renders a direct target');
 });
 
+test('DIRECT-WIRE-10b: EVERY callAI site forwards the direct fields', () => {
+    // The bug this guards: aiSearch's two call sites hand-build their config from
+    // a settings SNAPSHOT (settingsIn — the pipeline threads one consistent
+    // settings object through a run) instead of spreading resolveConnectionConfig(),
+    // and the hand-written field list omitted apiUrl/apiKey/apiFormat/
+    // apiViaCorsProxy. Result: AI search threw "Direct API mode needs an API URL"
+    // on every call while the settings UI's test button — which DOES resolve —
+    // worked, so the mode looked configured and still failed.
+    //
+    // Rule: a callAI config must be one of —
+    //   (a) a pre-built config passed as a bare variable (`callAI(sys, msg, conn)`),
+    //   (b) a literal that spreads a resolved config (`{ ...resolved, caller }`), or
+    //   (c) a literal that names all four direct fields itself.
+    // Anything else is a hand-written field list that can silently go stale.
+    const files = ['src/ai/ai.js', 'src/ai/scribe.js', 'src/ai/auto-suggest.js', 'src/ai/summarize.js',
+        'src/ui/commands-ai.js', 'src/librarian/librarian-session.js', 'src/ui/settings-ui.js'];
+    let checked = 0;
+    for (const f of files) {
+        const src = read(f);
+        const re = /callAI\(/g;
+        let m;
+        while ((m = re.exec(src)) !== null) {
+            // Skip the definition itself and doc references.
+            if (/export async function callAI\($/.test(src.slice(0, m.index + 8))) continue;
+            const config = src.slice(m.index, m.index + 1400);
+            const spreads = /\.\.\.[A-Za-z_$][\w$]*(?:\(|,|\s|\})/.test(config);
+            const namesDirect = /apiUrl/.test(config) && /apiKey/.test(config)
+                && /apiFormat/.test(config) && /apiViaCorsProxy/.test(config);
+            // (a) the config argument is a bare variable, already fully built.
+            const prebuiltVar = /callAI\([\s\S]{0,300}?,\s*[A-Za-z_$][\w$.]*\s*,?\s*\)/.test(config);
+            assert(spreads || namesDirect || prebuiltVar,
+                `${f}: a callAI site hand-lists connection fields without the direct ones`);
+            checked++;
+        }
+    }
+    assert(checked >= 7, `expected to inspect every callAI site, saw ${checked}`);
+});
+
+test('DIRECT-WIRE-10c: aiSearch\'s snapshot helper carries all four direct fields', () => {
+    const src = read('src/ai/ai.js');
+    const helper = src.slice(src.indexOf('function aiSearchConnectionFields('));
+    const body = helper.slice(0, helper.indexOf('\n}') + 2);
+    for (const field of ['mode', 'profileId', 'proxyUrl', 'model', 'apiUrl', 'apiKey', 'apiFormat', 'apiViaCorsProxy']) {
+        assertMatch(body, new RegExp(`${field}: settings\\.aiSearch`), `helper forwards ${field}`);
+    }
+    // It must read the passed-in snapshot, never re-resolve live settings — the
+    // pipeline threads one settings object through a whole run.
+    assert(!/resolveConnectionConfig/.test(body), 'helper reads the snapshot, not live settings');
+    // Both aiSearch call sites must use it rather than re-listing fields.
+    assertEqual((src.match(/\.\.\.aiSearchConnectionFields\(settings\)/g) || []).length, 2,
+        'both aiSearch callAI sites spread the helper');
+});
+
 test('DIRECT-WIRE-11: the AI-search cache key includes the direct endpoint', () => {
     // Otherwise switching endpoint or format would serve results cached from the
     // previous connection.
